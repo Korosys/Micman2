@@ -16,21 +16,21 @@ import (
 )
 
 var (
-	testModeChan = make(chan bool, 1)
-	testMode     bool
+	mutedModeChan = make(chan bool, 1)
+	mutedMode     bool
 )
 
 func main() {
 	// Parse flags once at the beginning
-	test := flag.Bool("test", false, "Run in test mode")
-	notest := flag.Bool("notest", false, "Disable test mode")
+	muted := flag.Bool("muted", false, "Run in muted mode")
+	unmuted := flag.Bool("unmuted", false, "Disable muted mode")
 	flag.Parse()
 
-	// Determine test mode based on flags
-	if *test {
-		testMode = true
-	} else if *notest {
-		testMode = false
+	// Determine muted mode based on flags
+	if *muted {
+		mutedMode = true
+	} else if *unmuted {
+		mutedMode = false
 	}
 	// If neither flag is provided, keep current state (false by default)
 
@@ -70,10 +70,10 @@ func checkSingleInstance() bool {
 
 		// Send flag information to existing instance
 		message := fmt.Sprintf("FLAG:%s", port)
-		if testMode {
-			message = fmt.Sprintf("FLAG:%s:TEST", port)
+		if mutedMode {
+			message = fmt.Sprintf("FLAG:%s:MUTED", port)
 		} else {
-			message = fmt.Sprintf("FLAG:%s:NOTEST", port)
+			message = fmt.Sprintf("FLAG:%s:UNMUTED", port)
 		}
 
 		_, err = conn.Write([]byte(message))
@@ -123,33 +123,33 @@ func handleFlagConnection(conn net.Conn) {
 		parts := strings.Split(message[5:], ":")
 		if len(parts) > 1 {
 			switch parts[1] {
-			case "TEST":
-				// Handle test flag - update the systray icon or behavior
-				updateSystrayForTestMode(true)
-			case "NOTEST":
-				// Handle notest flag - update the systray icon or behavior
-				updateSystrayForTestMode(false)
+			case "MUTED":
+				// Handle muted flag - update the systray icon or behavior
+				updateSystrayForMutedMode(true)
+			case "UNMUTED":
+				// Handle unmuted flag - update the systray icon or behavior
+				updateSystrayForMutedMode(false)
 			}
 		}
 	}
 }
 
-// updateSystrayForTestMode updates the systray to indicate test mode
-func updateSystrayForTestMode(isTestMode bool) {
+// updateSystrayForMutedMode updates the systray to indicate muted mode
+func updateSystrayForMutedMode(isMutedMode bool) {
 	// Send signal to the main systray goroutine to update
 	select {
-	case testModeChan <- isTestMode:
+	case mutedModeChan <- isMutedMode:
 	default:
 		// Channel is full, ignore
 	}
 }
 
 func onReady() {
-	// Check if we started with --test flag
-	if testMode {
-		fmt.Println("Running in TEST mode!")
-		systray.SetTitle("Awesome App (TEST MODE)")
-		systray.SetTooltip("Running in TEST mode! 🧪")
+	// Check if we started with --muted flag
+	if mutedMode {
+		fmt.Println("Running in MUTED mode!")
+		systray.SetTitle("Awesome App (MUTED MODE)")
+		systray.SetTooltip("Running in MUTED mode! 🔇")
 	} else {
 		systray.SetTemplateIcon(icon.Data, icon.Data)
 		systray.SetTitle("Awesome App")
@@ -172,12 +172,12 @@ func onReady() {
 
 		for {
 			select {
-			case isTestMode := <-testModeChan:
-				if isTestMode {
-					fmt.Println("Switching to TEST mode!")
+			case isMutedMode := <-mutedModeChan:
+				if isMutedMode {
+					fmt.Println("Switching to MUTED mode!")
 					systray.SetTemplateIcon(icon2.Data, icon2.Data)
-					systray.SetTitle("Awesome App (TEST MODE)")
-					systray.SetTooltip("Running in TEST mode! 🧪")
+					systray.SetTitle("Awesome App (MUTED MODE)")
+					systray.SetTooltip("Running in MUTED mode! 🔇")
 				} else {
 					fmt.Println("Switching to NORMAL mode!")
 					systray.SetTemplateIcon(icon.Data, icon.Data)
