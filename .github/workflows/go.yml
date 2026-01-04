@@ -24,4 +24,4 @@ jobs:
         run: env GO111MODULE=on GOOS=windows go build -v ./main.go
 
       - name: Test
-        run: go test -v ./main.go
+        run: env GOOS=windows go test -v ./main.go
