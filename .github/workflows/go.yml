@@ -24,7 +24,7 @@ jobs:
         run: sudo apt-get install -y gcc && env CGO_ENABLED=1
 
       - name: Build
-        run: env GO111MODULE=on go build -v ./main.go
+        run: env CGO_ENABLED=1 go build -v ./main.go
 
       - name: Test
         run: go test -v ./main.go
