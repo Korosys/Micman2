@@ -1,6 +1,6 @@
 module micman2
 
-go 1.25.5
+go 1.25
 
 require github.com/getlantern/systray v1.2.2
 
