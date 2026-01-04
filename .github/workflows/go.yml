@@ -20,11 +20,8 @@ jobs:
         with:
           go-version: "1.25"
 
-      - name: deps
-        run: export GOOS=windows && export CGO_ENABLED=1
-
       - name: Build
-        run: env GO111MODULE=on go build -v ./main.go
+        run: env GO111MODULE=on GOOS=windows go build -v ./main.go
 
       - name: Test
         run: go test -v ./main.go
