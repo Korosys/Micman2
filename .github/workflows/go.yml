@@ -25,3 +25,91 @@ jobs:
 
       - name: Test
         run: env GOOS=windows go test -v ./main.go
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.25"
+
+      - name: Get version from git tag or create version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=$(git describe --tags --always --dirty)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build binaries for multiple platforms
+        run: |
+          # Build for Windows
+          GOOS=windows GOARCH=amd64 go build -o micman2-windows-amd64.exe -v ./main.go
+
+          # Build for Linux
+          GOOS=linux GOARCH=amd64 go build -o micman2-linux-amd64 -v ./main.go
+
+          # Build for macOS
+          GOOS=darwin GOARCH=amd64 go build -o micman2-darwin-amd64 -v ./main.go
+          GOOS=darwin GOARCH=arm64 go build -o micman2-darwin-arm64 -v ./main.go
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          body: |
+            ## Micman2 Release ${{ steps.version.outputs.tag }}
+
+            This release includes:
+            - Cross-platform support (Windows, Linux, macOS)
+            - Built with Go 1.25
+            - Updated icon support
+
+            ### Download
+
+            - [micman2-windows-amd64.exe](micman2-windows-amd64.exe)
+            - [micman2-linux-amd64](micman2-linux-amd64)
+            - [micman2-darwin-amd64](micman2-darwin-amd64)
+            - [micman2-darwin-arm64](micman2-darwin-arm64)
+
+            ### Installation
+
+            Download the appropriate binary for your platform and run it directly.
+
+            **Windows**: Run `micman2-windows-amd64.exe`
+
+            **Linux**: Make executable and run:
+            ```bash
+            chmod +x micman2-linux-amd64
+            ./micman2-linux-amd64
+            ```
+
+            **macOS**: Make executable and run:
+            ```bash
+            chmod +x micman2-darwin-amd64
+            ./micman2-darwin-amd64
+            ```
+
+            ### Usage
+
+            - `--muted`: Start in muted mode
+            - `--unmuted`: Start in normal mode
+
+            Example:
+            ```bash
+            ./micman2-windows-amd64.exe --muted
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+</tool_response>
