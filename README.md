@@ -7,4 +7,4 @@ I don't know why you would use it but it changes the tray icon when run the exe 
 
 I use voicemeeter macrobuttons to actually mute and unmute, which also changes the icon.
 
-i have no idea what im doing
+i have no idea what im doing.
