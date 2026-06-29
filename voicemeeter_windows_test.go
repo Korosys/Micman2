@@ -3,7 +3,30 @@
 
 package main
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
+
+func TestVoicemeeterLoginError(t *testing.T) {
+	if err := voicemeeterLoginError(0); err != nil {
+		t.Fatalf("login result 0 should be success, got %v", err)
+	}
+
+	if err := voicemeeterLoginError(1); !errors.Is(err, errVoicemeeterNotRunning) {
+		t.Fatalf("login result 1 should report Voicemeeter not running, got %v", err)
+	}
+
+	for _, code := range []int32{-1, -2} {
+		err := voicemeeterLoginError(code)
+		if err == nil {
+			t.Fatalf("login result %d should be an error", code)
+		}
+		if errors.Is(err, errVoicemeeterNotRunning) {
+			t.Fatalf("login result %d should be a hard failure, not not-running", code)
+		}
+	}
+}
 
 func TestVoicemeeterStripMuteParam(t *testing.T) {
 	if got := voicemeeterStripMuteParam(0); got != "Strip[0].Mute" {

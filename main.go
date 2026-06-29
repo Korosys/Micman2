@@ -240,16 +240,27 @@ func onReady() {
 		defer startupRetry.Stop()
 		startupRetryC := startupRetry.C
 		startupRetryCount := 0
+		// vmSynced becomes true once we have read a trustworthy state from a
+		// running Voicemeeter (or an explicit hotkey/flag update arrives). Until
+		// then we keep polling, because we may have launched before Voicemeeter
+		// finished starting and the initial read fell back to "unmuted". When
+		// detection is disabled (an explicit --muted/--unmuted flag), there is
+		// nothing to wait for, so consider it already synced.
+		vmSynced := !detectVMState.Load()
 
 		for {
 			select {
 			case isMutedMode := <-mutedModeChan:
 				applyMicStateChange(isMutedMode)
+				// An explicit hotkey/flag update is authoritative; stop letting
+				// startup polling second-guess it.
+				vmSynced = true
 			case <-startupRetryC:
 				previousMutedMode := mutedMode
-				if detectVMState.Load() {
+				if detectVMState.Load() && !vmSynced {
 					if isMutedMode, err := currentVoicemeeterMuted(vmStateSource); err == nil {
 						mutedMode = isMutedMode
+						vmSynced = true
 					}
 				}
 				applyTrayState(mutedMode)
@@ -257,7 +268,12 @@ func onReady() {
 					showMicStateToast(mutedMode)
 				}
 				startupRetryCount++
-				if startupRetryCount >= 30 {
+				// Keep re-applying for a short window so the icon appears even if
+				// Explorer's notification area was not ready yet, but do not give up
+				// detecting the real Voicemeeter state on a fixed deadline: if the
+				// engine is slow to start we keep retrying (up to a generous cap)
+				// until we have synced at least once.
+				if (vmSynced && startupRetryCount >= 30) || startupRetryCount >= 600 {
 					startupRetry.Stop()
 					startupRetryC = nil
 				}

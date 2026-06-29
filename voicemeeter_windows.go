@@ -17,12 +17,57 @@ import (
 
 const defaultVoicemeeterStrip = 0
 
+// errVoicemeeterNotRunning means we logged in to the Voicemeeter Remote service
+// but the Voicemeeter application/engine itself is not running yet, so there are
+// no real parameters to read. Callers should treat this as "state unknown, retry"
+// rather than as a definitive unmuted reading.
+var errVoicemeeterNotRunning = fmt.Errorf("Voicemeeter application is not running")
+
 type voicemeeterRemote struct {
 	login             *syscall.LazyProc
 	logout            *syscall.LazyProc
 	isParametersDirty *syscall.LazyProc
 	getParameterFloat *syscall.LazyProc
 	setParameters     *syscall.LazyProc
+}
+
+// connect logs in to the Voicemeeter Remote API. VBVMR_Login returns 0 when the
+// engine is running, a negative code on failure, and 1 when login itself
+// succeeded but the Voicemeeter application is not launched. The 1 case is the
+// reason the tray could come up showing "unmuted" while actually muted: when we
+// start before Voicemeeter at boot the engine is not ready, an immediate read
+// yields nothing meaningful, and treating 1 as success silently produced a false
+// unmuted state. Surface it as errVoicemeeterNotRunning so callers fall back and
+// keep retrying until the engine is up.
+func (remote *voicemeeterRemote) connect() error {
+	result := callVoicemeeter(remote.login)
+	err := voicemeeterLoginError(result)
+	if err != nil {
+		// A non-negative result means the client registered with the Remote
+		// service even though the engine is not running yet (result == 1), so
+		// pair that login with a logout before bailing out instead of leaking it
+		// on every retry. A negative result means login itself failed and there
+		// is nothing to release.
+		if result >= 0 {
+			callVoicemeeter(remote.logout)
+		}
+		return err
+	}
+	return nil
+}
+
+// voicemeeterLoginError maps a VBVMR_Login return code to an error: 0 means the
+// engine is running and parameters are readable; a negative code is a hard
+// failure; 1 means login succeeded but the Voicemeeter application is not
+// launched yet (treated as not-ready so callers retry instead of reading junk).
+func voicemeeterLoginError(result int32) error {
+	if result < 0 {
+		return voicemeeterError("VBVMR_Login", result)
+	}
+	if result == 1 {
+		return errVoicemeeterNotRunning
+	}
+	return nil
 }
 
 func currentVoicemeeterMuted(paramName string) (bool, error) {
@@ -36,17 +81,12 @@ func currentVoicemeeterMuted(paramName string) (bool, error) {
 		return false, err
 	}
 
-	result := callVoicemeeter(remote.login)
-	if result < 0 {
-		return false, voicemeeterError("VBVMR_Login", result)
+	if err := remote.connect(); err != nil {
+		return false, err
 	}
 	defer callVoicemeeter(remote.logout)
 
-	// Voicemeeter's API docs recommend polling this before reading parameters.
-	// We only need one startup snapshot, so the result is not important here.
-	callVoicemeeter(remote.isParametersDirty)
-
-	return remote.parameterMuted(paramName)
+	return remote.syncedParameterMuted(paramName)
 }
 
 func toggleVoicemeeterMuted(paramName string) (bool, error) {
@@ -60,15 +100,12 @@ func toggleVoicemeeterMuted(paramName string) (bool, error) {
 		return false, err
 	}
 
-	result := callVoicemeeter(remote.login)
-	if result < 0 {
-		return false, voicemeeterError("VBVMR_Login", result)
+	if err := remote.connect(); err != nil {
+		return false, err
 	}
 	defer callVoicemeeter(remote.logout)
 
-	callVoicemeeter(remote.isParametersDirty)
-
-	isMuted, err := remote.parameterMuted(paramName)
+	isMuted, err := remote.syncedParameterMuted(paramName)
 	if err != nil {
 		return false, err
 	}
@@ -87,6 +124,34 @@ func toggleVoicemeeterMuted(paramName string) (bool, error) {
 	}
 
 	return verifiedMuted, nil
+}
+
+// voicemeeterSyncAttempts/Interval bound how long syncedParameterMuted waits for
+// the engine to deliver the parameter snapshot to a freshly logged-in client.
+// The snapshot was observed to arrive within ~100ms, so 40*25ms is a generous cap.
+const (
+	voicemeeterSyncAttempts = 40
+	voicemeeterSyncInterval = 25 * time.Millisecond
+)
+
+// syncedParameterMuted reads the mute parameter after the engine has delivered
+// the current parameter snapshot to this freshly logged-in client. Right after
+// VBVMR_Login the client's cache is cold and VBVMR_GetParameterFloat returns a
+// stale 0 until the engine pushes the real values, which it signals by the next
+// VBVMR_IsParametersDirty returning 1 (observed ~100ms later). Reading before
+// that snapshot is what made the tray show "unmuted" for a strip muted from the
+// Voicemeeter UI; a mute set through the Remote API happens to warm the cache,
+// which is why hotkey-set mutes read correctly while GUI-set mutes did not.
+// Wait for that first dirty signal, then read; fall back to a best-effort read
+// if it never arrives.
+func (remote *voicemeeterRemote) syncedParameterMuted(paramName string) (bool, error) {
+	for attempt := 0; attempt < voicemeeterSyncAttempts; attempt++ {
+		if callVoicemeeter(remote.isParametersDirty) == 1 {
+			return remote.parameterMuted(paramName)
+		}
+		time.Sleep(voicemeeterSyncInterval)
+	}
+	return remote.parameterMuted(paramName)
 }
 
 func (remote *voicemeeterRemote) parameterMuted(paramName string) (bool, error) {
