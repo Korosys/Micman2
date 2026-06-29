@@ -29,6 +29,15 @@ func TestCurrentTrayStateTooltips(t *testing.T) {
 	}
 }
 
+func TestMicStateToastText(t *testing.T) {
+	if got := micStateToastText(true); got != "Microphone muted" {
+		t.Fatalf("micStateToastText(true) = %q", got)
+	}
+	if got := micStateToastText(false); got != "Microphone unmuted" {
+		t.Fatalf("micStateToastText(false) = %q", got)
+	}
+}
+
 func TestChooseInitialMuted(t *testing.T) {
 	detectCalled := false
 	detectMuted := func() (bool, error) {

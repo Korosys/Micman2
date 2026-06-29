@@ -50,6 +50,22 @@ func applyTrayState(isMuted bool) {
 	systray.SetTooltip(state.tooltip)
 }
 
+func micStateToastText(isMuted bool) string {
+	if isMuted {
+		return "Microphone muted"
+	}
+	return "Microphone unmuted"
+}
+
+func applyMicStateChange(isMutedMode bool) {
+	stateChanged := mutedMode != isMutedMode
+	mutedMode = isMutedMode
+	applyTrayState(mutedMode)
+	if stateChanged {
+		showMicStateToast(mutedMode)
+	}
+}
+
 func chooseInitialMuted(mutedFlag bool, unmutedFlag bool, detect func() (bool, error)) bool {
 	if mutedFlag {
 		return true
@@ -227,15 +243,18 @@ func onReady() {
 		for {
 			select {
 			case isMutedMode := <-mutedModeChan:
-				mutedMode = isMutedMode
-				applyTrayState(mutedMode)
+				applyMicStateChange(isMutedMode)
 			case <-startupRetryC:
+				previousMutedMode := mutedMode
 				if detectVMState.Load() {
 					if isMutedMode, err := currentVoicemeeterMuted(vmStateSource); err == nil {
 						mutedMode = isMutedMode
 					}
 				}
 				applyTrayState(mutedMode)
+				if mutedMode != previousMutedMode {
+					showMicStateToast(mutedMode)
+				}
 				startupRetryCount++
 				if startupRetryCount >= 30 {
 					startupRetry.Stop()
