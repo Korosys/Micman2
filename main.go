@@ -2,10 +2,10 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"micman2/icon"
@@ -17,21 +17,70 @@ import (
 var (
 	mutedModeChan = make(chan bool, 1)
 	mutedMode     bool
+	vmStateSource string
+	detectVMState atomic.Bool
 )
+
+type trayState struct {
+	icon    []byte
+	title   string
+	tooltip string
+}
+
+func currentTrayState(isMuted bool) trayState {
+	if isMuted {
+		return trayState{
+			icon:    icon2.Data,
+			title:   "Micman 2 (muted)",
+			tooltip: "Micman 2 - microphone muted",
+		}
+	}
+
+	return trayState{
+		icon:    icon.Data,
+		title:   "Micman 2",
+		tooltip: "Micman 2 - microphone unmuted",
+	}
+}
+
+func applyTrayState(isMuted bool) {
+	state := currentTrayState(isMuted)
+	systray.SetTemplateIcon(state.icon, state.icon)
+	systray.SetTitle(state.title)
+	systray.SetTooltip(state.tooltip)
+}
+
+func chooseInitialMuted(mutedFlag bool, unmutedFlag bool, detect func() (bool, error)) bool {
+	if mutedFlag {
+		return true
+	}
+	if unmutedFlag {
+		return false
+	}
+
+	isMuted, err := detect()
+	if err != nil {
+		return false
+	}
+	return isMuted
+}
 
 func main() {
 	// Parse flags once at the beginning
 	muted := flag.Bool("muted", false, "Run in muted mode")
 	unmuted := flag.Bool("unmuted", false, "Disable muted mode")
+	vmStrip := flag.Int("vm-strip", defaultVoicemeeterStrip, "Voicemeeter strip index to read for startup mute state")
+	vmParam := flag.String("vm-param", "", "Voicemeeter parameter to read instead of a strip mute parameter, for example Strip[0].Mute")
 	flag.Parse()
 
-	// Determine muted mode based on flags
-	if *muted {
-		mutedMode = true
-	} else if *unmuted {
-		mutedMode = false
+	vmStateSource = voicemeeterStripMuteParam(*vmStrip)
+	if *vmParam != "" {
+		vmStateSource = *vmParam
 	}
-	// If neither flag is provided, keep current state (false by default)
+	detectVMState.Store(!*muted && !*unmuted)
+	mutedMode = chooseInitialMuted(*muted, *unmuted, func() (bool, error) {
+		return currentVoicemeeterMuted(vmStateSource)
+	})
 
 	// Check for single instance
 	if !checkSingleInstance() {
@@ -68,11 +117,11 @@ func checkSingleInstance() bool {
 		defer conn.Close()
 
 		// Send flag information to existing instance
-		message := fmt.Sprintf("FLAG:%s", port)
+		message := "FLAG:" + port
 		if mutedMode {
-			message = fmt.Sprintf("FLAG:%s:MUTED", port)
+			message = "FLAG:" + port + ":MUTED"
 		} else {
-			message = fmt.Sprintf("FLAG:%s:UNMUTED", port)
+			message = "FLAG:" + port + ":UNMUTED"
 		}
 
 		_, err = conn.Write([]byte(message))
@@ -135,57 +184,63 @@ func handleFlagConnection(conn net.Conn) {
 
 // updateSystrayForMutedMode updates the systray to indicate muted mode
 func updateSystrayForMutedMode(isMutedMode bool) {
+	// A hotkey/explicit flag is authoritative. Do not let startup polling
+	// overwrite it while Explorer/Voicemeeter startup settles.
+	detectVMState.Store(false)
+
 	// Send signal to the main systray goroutine to update
 	select {
 	case mutedModeChan <- isMutedMode:
 	default:
-		// Channel is full, ignore
+		// Channel is full, replace the stale state so quick hotkey presses don't
+		// leave the tray showing the wrong final state.
+		select {
+		case <-mutedModeChan:
+		default:
+		}
+		select {
+		case mutedModeChan <- isMutedMode:
+		default:
+		}
 	}
 }
 
 func onReady() {
-	// Check if we started with --muted flag
-	if mutedMode {
-		fmt.Println("Running in MUTED mode!")
-		systray.SetTitle("Awesome App (MUTED MODE)")
-		systray.SetTooltip("Running in MUTED mode! 🔇")
-	} else {
-		systray.SetTemplateIcon(icon.Data, icon.Data)
-		systray.SetTitle("Awesome App")
-		systray.SetTooltip("Lantern")
-	}
+	applyTrayState(mutedMode)
 
 	mQuitOrig := systray.AddMenuItem("Quit", "Quit the whole app")
 	go func() {
 		<-mQuitOrig.ClickedCh
-		fmt.Println("Requesting quit")
 		systray.Quit()
-		fmt.Println("Finished quitting")
 	}()
 
-	// We can manipulate the systray in other goroutines
+	// We can manipulate the systray in other goroutines.
+	// Task Scheduler can start us before Explorer's notification area is fully
+	// ready. Re-applying the same state for a short window makes the icon appear
+	// without needing a few hotkey-triggered updates later.
 	go func() {
-		systray.SetTemplateIcon(icon.Data, icon.Data)
-		systray.SetTitle("Micman 2")
-		systray.SetTooltip("Mic Indicator")
+		startupRetry := time.NewTicker(time.Second)
+		defer startupRetry.Stop()
+		startupRetryC := startupRetry.C
+		startupRetryCount := 0
 
 		for {
 			select {
 			case isMutedMode := <-mutedModeChan:
-				if isMutedMode {
-					fmt.Println("Switching to MUTED mode!")
-					systray.SetTemplateIcon(icon2.Data, icon2.Data)
-					systray.SetTitle("Awesome App (MUTED MODE)")
-					systray.SetTooltip("Running in MUTED mode! 🔇")
-				} else {
-					fmt.Println("Switching to NORMAL mode!")
-					systray.SetTemplateIcon(icon.Data, icon.Data)
-					systray.SetTitle("Awesome App")
-					systray.SetTooltip("Lantern")
+				mutedMode = isMutedMode
+				applyTrayState(mutedMode)
+			case <-startupRetryC:
+				if detectVMState.Load() {
+					if isMutedMode, err := currentVoicemeeterMuted(vmStateSource); err == nil {
+						mutedMode = isMutedMode
+					}
 				}
-			default:
-				// Keep the goroutine alive but don't block
-				time.Sleep(100 * time.Millisecond)
+				applyTrayState(mutedMode)
+				startupRetryCount++
+				if startupRetryCount >= 30 {
+					startupRetry.Stop()
+					startupRetryC = nil
+				}
 			}
 		}
 	}()
