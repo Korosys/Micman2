@@ -3,10 +3,10 @@
 
 A dumb app to visually indicate via the system tray if my microphone is muted.
 
-I don't know why you would use it but it changes the tray icon when run the exe with either:
+I don't know why you would use it but it registers Ctrl+Space as a global hotkey to toggle the configured Voicemeeter strip mute state and update the tray icon.
+
+It still accepts explicit tray-state overrides when run with either:
 
 --muted or --unmuted
-
-I use voicemeeter macrobuttons to actually mute and unmute, which also changes the icon.
 
 i have no idea what im doing.

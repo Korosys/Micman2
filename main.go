@@ -223,6 +223,7 @@ func updateSystrayForMutedMode(isMutedMode bool) {
 
 func onReady() {
 	applyTrayState(mutedMode)
+	startGlobalHotkeyListener()
 
 	mQuitOrig := systray.AddMenuItem("Quit", "Quit the whole app")
 	go func() {
